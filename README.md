@@ -25,19 +25,17 @@ log) and falls back to manual override buttons everywhere.
 4. Open Torn. The overlay appears in the **bottom-right** corner. Drag it anywhere;
    its position is remembered.
 
-### Auto-update (private, from the local file)
+### Auto-update (from public GitHub)
 
-The repo stays **private** — auto-update reads the local file directly, so nothing is
-shared online. `@updateURL`/`@downloadURL` point at
-`file:///C:/discordbotit/TornQuest/TornQuest.user.js`.
+`@updateURL`/`@downloadURL` point at the public repo raw file
+(`https://raw.githubusercontent.com/Scrilleri/TornQuest/main/TornQuest.user.js`).
+When the file changes and `@version` is bumped, Tampermonkey auto-updates on its normal
+check interval — or immediately via **Tampermonkey → Check for userscript updates**. No
+extra browser permissions needed.
 
-One-time setup:
-1. `chrome://extensions` → Tampermonkey → **Details** → enable **"Allow access to file URLs"**.
-2. Install/paste the current script once (so the `file://` update meta is present).
-
-After that, when the file changes (and `@version` is bumped), Tampermonkey picks it up on
-its update-check interval, or immediately via **Tampermonkey → Check for userscript updates**.
-The private GitHub repo (`Scrilleri/TornQuest`) is kept as backup/version history only.
+> Prefer to keep the repo private instead? Set both `@updateURL` and `@downloadURL` to
+> `file:///C:/discordbotit/TornQuest/TornQuest.user.js` and enable Tampermonkey's
+> **"Allow access to file URLs"** (`chrome://extensions` → Tampermonkey → Details).
 
 ---
 
