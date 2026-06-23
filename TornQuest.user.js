@@ -115,7 +115,8 @@
       activeSlots: 0,
       // war / misc
       warPayout: 0,
-      ocIncome: 0, // OC / misc payouts (manual for now; auto-read TODO once log shape known)
+      ocIncome: 0, // OC payouts — manual by design: OC money lands in faction balance
+      //               pre-split among members, so the log can't tell how much was OC.
     };
   }
 

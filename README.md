@@ -94,8 +94,9 @@ Every row has override buttons (open a row with `▼`):
 - **Training:** +25E / +100E / −25E
 - **Crimes/OC:** + crime $, + nerve (N), and **+ OC income** (organised-crime payouts live
   here now). OC income feeds Daily/Monthly totals but is kept separate from the nerve
-  crime target. (Auto-reading OC from the log is a TODO — needs a real OC-payout log entry
-  to map the fields safely.)
+  crime target. (OC is **manual by design**: OC payouts arrive in your faction balance
+  already split among members, so the log can't tell how much of a balance change was OC —
+  only you know, so you enter it.)
 - **Bounty:** +1 / +5 / +10 filled, +1 claimed, +1 expired, edit active slots
 - **War:** toggle ON/OFF + a **war-payout ledger** — add a payout any time (wars recur),
   see each one listed with its date, and **edit** or **remove** individual entries. War
