@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.1.0
+// @version      0.2.0
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -9,6 +9,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      api.torn.com
+// @updateURL    https://raw.githubusercontent.com/Scrilleri/TornQuest/main/TornQuest.user.js
+// @downloadURL  https://raw.githubusercontent.com/Scrilleri/TornQuest/main/TornQuest.user.js
 // ==/UserScript==
 
 /*
@@ -63,8 +65,7 @@
       beerUsesPerDay: 0, // bottles of beer/day (booster cooldown, max 48h pool)
       beerAvgNerve: 1.5, // beer gives 1-2 nerve random
       otherAlcoholNerve: 0, // extra nerve/day from stronger alcohol (manual estimate)
-      nerveRefill: 250, // nerve restored by one daily points "nerve refill"
-      nerveRefillsPerDay: 1, // points nerve refills used per day
+      nerveRefillsPerDay: 1, // points nerve refills/day; each restores to max nerve
     },
     bounty: {
       slotValue: 100_000, // $ per filled/claimed bounty slot
@@ -297,9 +298,11 @@
 
     // --- crimes / nerve ---
     potentialDailyNerve(s) {
+      // A points nerve refill always restores to MAX nerve, which itself grows over
+      // time — so the refill bonus tracks s.crime.maxNerve (auto-synced from the API).
       return (
         s.crime.baseDailyNerve +
-        (s.crime.nerveRefillsPerDay || 0) * (s.crime.nerveRefill || 0) +
+        (s.crime.nerveRefillsPerDay || 0) * (s.crime.maxNerve || 0) +
         (s.crime.beerUsesPerDay || 0) * (s.crime.beerAvgNerve || 0) +
         (s.crime.otherAlcoholNerve || 0)
       );
@@ -564,6 +567,8 @@
     // Bars (current energy/nerve display only).
     try {
       bars = await api.fetchBars();
+      // Max nerve grows over time; keep it current so the refill bonus stays accurate.
+      if (bars.nerve && bars.nerve.maximum > 0) st.settings.crime.maxNerve = bars.nerve.maximum;
       ok.push("bars");
     } catch (e) {
       failed.push("bars");
@@ -994,7 +999,7 @@
           pct(crimeInc, crimeTarget),
           `<div class="tq-kv"><span>Needed today</span><span>${fmtMoney(crimeNeed)}</span></div>
            <div class="tq-kv"><span>Avg / 125N</span><span>$${fmtMoneyShort(s.crime.avgPayoutPer125N)}</span></div>
-           <div class="tq-kv"><span>Refill nerve</span><span>+${fmtInt((s.crime.nerveRefillsPerDay||0)*(s.crime.nerveRefill||0))}N</span></div>
+           <div class="tq-kv"><span>Refill nerve (= max ${fmtInt(s.crime.maxNerve)})</span><span>+${fmtInt((s.crime.nerveRefillsPerDay||0)*(s.crime.maxNerve||0))}N</span></div>
            <div class="tq-kv"><span>Beer / alcohol nerve</span><span>+${fmtInt((s.crime.beerUsesPerDay||0)*(s.crime.beerAvgNerve||0)+(s.crime.otherAlcoholNerve||0))}N</span></div>
            <div class="tq-kv"><span>Current nerve (API)</span><span>${nerveNow}</span></div>
            <div class="tq-btns">
@@ -1224,11 +1229,10 @@
           ${num("Hit value $", "merc.hitValue", s.merc.hitValue, 50000)}
 
           <h4>Crimes</h4>
-          ${num("Max nerve", "crime.maxNerve", s.crime.maxNerve)}
+          ${num("Max nerve (auto from API)", "crime.maxNerve", s.crime.maxNerve)}
           ${num("Base nerve / day", "crime.baseDailyNerve", s.crime.baseDailyNerve)}
           ${num("Avg $ / 125N", "crime.avgPayoutPer125N", s.crime.avgPayoutPer125N, 100000)}
-          ${num("Nerve refill (N)", "crime.nerveRefill", s.crime.nerveRefill)}
-          ${num("Refills / day", "crime.nerveRefillsPerDay", s.crime.nerveRefillsPerDay)}
+          ${num("Refills / day (= max nerve each)", "crime.nerveRefillsPerDay", s.crime.nerveRefillsPerDay)}
           ${num("Beer uses / day", "crime.beerUsesPerDay", s.crime.beerUsesPerDay)}
           ${num("Beer avg nerve", "crime.beerAvgNerve", s.crime.beerAvgNerve, 0.1)}
           ${num("Other alcohol nerve", "crime.otherAlcoholNerve", s.crime.otherAlcoholNerve)}

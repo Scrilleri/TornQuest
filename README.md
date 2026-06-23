@@ -111,7 +111,7 @@ Settings → **Export JSON** (copies all data + settings to clipboard) / **Impor
 | Merc hit value | $1,000,000 |
 | Max nerve / regen | 125 / 288 per day |
 | Avg crime $ / 125N | $3,000,000 |
-| Nerve refill | 250 N × 1 refill/day |
+| Nerve refill | = max nerve (auto-synced) × 1 refill/day |
 | Beer | uses/day × 1.5 N (+ "other alcohol" nerve) |
 | Bounty slot value | $100,000 |
 | Bounty daily target | 64 |
