@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.3.0
+// @version      0.3.1
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -166,6 +166,9 @@
         this.state = raw;
         this.state.settings = mergeDefaults(raw.settings, DEFAULT_SETTINGS);
         this.state.daily = raw.daily || freshDaily(utcDayKey());
+        // Migrate pre-0.3.0 daily: manualIncome was renamed to ocIncome.
+        if (this.state.daily.ocIncome === undefined)
+          this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
         this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
         if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
         this.state.history = raw.history || [];
@@ -201,6 +204,8 @@
         this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
         if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
         this.state.daily = raw.daily || this.state.daily;
+        if (this.state.daily && this.state.daily.ocIncome === undefined)
+          this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
         this.state.history = raw.history || [];
         this.state.seenEventIds = raw.seenEventIds || {};
         this.state.meta = raw.meta || this.state.meta;
@@ -1184,7 +1189,7 @@
             st.campaign.warPayouts.push({ id: genId(), ts: Date.now(), amount: amt });
           }
         },
-        "income": () => (d.ocIncome += this.numVal("income")),
+        "income": () => (d.ocIncome = (d.ocIncome || 0) + this.numVal("income")),
       };
       if (map[act]) {
         map[act]();
