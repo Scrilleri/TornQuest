@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.2.2
+// @version      0.3.0
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -115,7 +115,7 @@
       activeSlots: 0,
       // war / misc
       warPayout: 0,
-      manualIncome: 0,
+      ocIncome: 0, // OC / misc payouts (manual for now; auto-read TODO once log shape known)
     };
   }
 
@@ -188,6 +188,23 @@
       } catch (e) {
         console.warn("[TornQuest] save failed", e);
       }
+    },
+    // Re-read state from storage WITHOUT saving (used by the cross-tab storage listener
+    // so a non-leader tab reflects the leader's data without triggering a write loop).
+    reload() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(NS) || "null");
+        if (!raw) return;
+        this.state = raw;
+        this.state.settings = mergeDefaults(raw.settings, DEFAULT_SETTINGS);
+        this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
+        if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
+        this.state.daily = raw.daily || this.state.daily;
+        this.state.history = raw.history || [];
+        this.state.seenEventIds = raw.seenEventIds || {};
+        this.state.meta = raw.meta || this.state.meta;
+        this.state.apiKey = raw.apiKey || "";
+      } catch (e) {}
     },
     exportJSON() {
       return JSON.stringify(this.state, null, 2);
@@ -362,7 +379,7 @@
         this.mercIncome(s, d) +
         this.crimeIncome(d) +
         this.bountyClaimedIncome(s, d) +
-        (d.manualIncome || 0)
+        (d.ocIncome || 0)
       );
     },
     // Display total for today = base + any war payouts received today.
@@ -394,12 +411,25 @@
 
   const api = {
     _backoffUntil: 0,
+    _calls: [], // ms timestamps of recent calls (rolling 60s window)
+    _total: 0, // calls this browser session
+    _note(ts) {
+      this._calls.push(ts);
+      this._total += 1;
+      const cut = ts - 60000;
+      while (this._calls.length && this._calls[0] < cut) this._calls.shift();
+    },
+    callsPerMin() {
+      const cut = Date.now() - 60000;
+      return this._calls.filter((t) => t >= cut).length;
+    },
 
     _get(path, params) {
       const key = store.state.apiKey;
       return new Promise((resolve, reject) => {
         if (!key) return reject(new Error("no-key"));
         if (Date.now() < this._backoffUntil) return reject(new Error("backoff"));
+        this._note(Date.now());
         const qs = new URLSearchParams(Object.assign({ key }, params || {})).toString();
         const url = `${API_BASE}${path}${path.includes("?") ? "&" : "?"}${qs}`;
         GM_xmlhttpRequest({
@@ -439,9 +469,13 @@
     },
 
     async fetchBars() {
-      // v2: /user?selections=bars -> { energy:{current,maximum}, nerve:{...}, ... }
-      const data = await this._get("/user", { selections: "bars" });
+      // Combine bars + basic in ONE call: energy/nerve AND own player id (profile.id),
+      // so we don't spend a separate request just to learn selfId.
+      const data = await this._get("/user", { selections: "bars,basic" });
       const bars = data.bars || data; // tolerate both shapes
+      const p = data.profile || {};
+      const id = p.id || p.player_id;
+      if (id) store.state.meta.selfId = id;
       return {
         energy: bars.energy || null,
         nerve: bars.nerve || null,
@@ -562,15 +596,7 @@
     let ok = [];
     let failed = [];
 
-    if (!st.meta.selfId) {
-      try {
-        await api.fetchSelf();
-      } catch (e) {
-        /* non-fatal */
-      }
-    }
-
-    // Bars (current energy/nerve display only).
+    // Bars (current energy/nerve display + selfId via combined bars,basic call).
     try {
       bars = await api.fetchBars();
       // Max nerve grows over time; keep it current so the refill bonus stays accurate.
@@ -653,7 +679,7 @@
       bountyFilled: d.bountyFilled,
       trainingEnergy: d.trainingEnergyUsed,
       warPayout: warForDay,
-      manualIncome: d.manualIncome,
+      ocIncome: d.ocIncome,
     });
     if (st.history.length > 400) st.history = st.history.slice(-400);
 
@@ -955,7 +981,7 @@
         <span class="tq-hbtn" data-act="hide" title="Hide">✕</span>`;
 
       this.root.innerHTML =
-        this.header("⚔ CAMPAIGN", headBtns) +
+        this.header("⚔ DAILY QUEST", headBtns) +
         `<div class="tq-body">` +
         // Cane Fund
         row(
@@ -999,20 +1025,25 @@
         ) +
         // Crimes
         row(
-          "crime", "🧠", "Crimes",
+          "crime", "🧠", "Crimes/OC",
           `${fmtInt(nerveUsed)}N / ${fmtInt(potNerve)}N`,
           `${fmtMoney(crimeInc)} / ${fmtMoney(crimeTarget)}`,
           pct(crimeInc, crimeTarget),
-          `<div class="tq-kv"><span>Needed today</span><span>${fmtMoney(crimeNeed)}</span></div>
+          `<div class="tq-kv"><span>OC income today</span><span>${fmtMoney(d.ocIncome || 0)}</span></div>
+           <div class="tq-kv"><span>Needed today (crimes)</span><span>${fmtMoney(crimeNeed)}</span></div>
            <div class="tq-kv"><span>Avg / 125N</span><span>$${fmtMoneyShort(s.crime.avgPayoutPer125N)}</span></div>
            <div class="tq-kv"><span>Refill nerve (= max ${fmtInt(s.crime.maxNerve)})</span><span>+${fmtInt((s.crime.nerveRefillsPerDay||0)*(s.crime.maxNerve||0))}N</span></div>
            <div class="tq-kv"><span>Beer / alcohol nerve</span><span>+${fmtInt((s.crime.beerUsesPerDay||0)*(s.crime.beerAvgNerve||0)+(s.crime.otherAlcoholNerve||0))}N</span></div>
            <div class="tq-kv"><span>Current nerve (API)</span><span>${nerveNow}</span></div>
            <div class="tq-btns">
-             <span class="tq-btn" data-act="crimeinc">+ income</span>
+             <span class="tq-btn" data-act="crimeinc">+ crime $</span>
              <input class="tq-num" data-num="crimeinc" type="number" placeholder="$" />
              <span class="tq-btn" data-act="crimenerve">+ nerve</span>
              <input class="tq-num" data-num="crimenerve" type="number" placeholder="N" />
+           </div>
+           <div class="tq-btns">
+             <input class="tq-num" data-num="income" type="number" placeholder="$ OC payout" />
+             <span class="tq-btn" data-act="income">+ OC income</span>
            </div>`
         ) +
         // Bounty
@@ -1070,16 +1101,11 @@
                : `<div class="tq-empty">No war payouts added yet</div>`
            }`
         ) +
-        // Footer
+        // Footer (income entry now lives in its row: OC → Crimes/OC, payout → War Mode)
         `<div class="tq-foot">
            <div class="tq-kv"><span>Daily Income</span><span>${fmtMoney(dailyIncome)} / ${fmtMoney(needPerDay)}</span></div>
            <div class="tq-kv"><span>Monthly Income</span><span>${fmtMoney(campIncome)} / ${fmtMoney(s.campaign.target)}</span></div>
            <div class="tq-kv"><span>Days Left</span><span>${daysLeft} / ${s.campaign.days}</span></div>
-           <div class="tq-kv"><span style="color:#7d6c45">War payouts → 🛡 War Mode row</span><span></span></div>
-           <div class="tq-btns" style="margin-top:4px">
-             <input class="tq-num" data-num="income" type="number" placeholder="$ OC / misc" />
-             <span class="tq-btn" data-act="income">+ OC / misc income</span>
-           </div>
            <div class="tq-reset" id="tq-reset">Reset in --:--:-- · TCT 00:00</div>
          </div>` +
         `</div>`;
@@ -1157,7 +1183,7 @@
             st.campaign.warPayouts.push({ id: genId(), ts: Date.now(), amount: amt });
           }
         },
-        "income": () => (d.manualIncome += this.numVal("income")),
+        "income": () => (d.ocIncome += this.numVal("income")),
       };
       if (map[act]) {
         map[act]();
@@ -1217,6 +1243,7 @@
             <span class="tq-btn" data-s="clearkey">Clear</span>
           </div>
           <div class="tq-status" id="tq-keystatus">Last sync: ${last}</div>
+          <div class="tq-status">API calls: ${api.callsPerMin()}/min · ${api._total} this session · limit 100/min${isLeader ? " · this tab is syncing" : " · another tab is syncing"}</div>
           <div style="font-size:10px;color:#7d6c45;margin-top:3px">Stored locally only · sent only to api.torn.com · never shown after save. Use a Limited/Full key for crime &amp; bounty logs.</div>
 
           <h4>Campaign</h4>
@@ -1345,14 +1372,41 @@
   // TIMERS / BOOT
   // ========================================================================== //
 
-  let syncTimer = null;
-  function restartSyncTimer() {
-    if (syncTimer) clearInterval(syncTimer);
-    const s = store.state.settings.sync;
-    if (s.autoSync && store.state.apiKey) {
-      const ms = Math.max(20, s.intervalSec) * 1000;
-      syncTimer = setInterval(() => syncNow(), ms);
+  // --- multi-tab leader election ------------------------------------------- //
+  // Each open Torn tab runs its own instance; without coordination, N tabs = N× the
+  // API calls. A localStorage heartbeat elects ONE leader that polls; non-leader tabs
+  // render the shared state (storage listener below) and never hit the API on a timer.
+  const TAB_ID = genId();
+  const BEAT_KEY = NS + ":beat";
+  const LEADER_STALE_MS = 15000;
+  let isLeader = false;
+
+  function leaderTick() {
+    const now = Date.now();
+    let beat = null;
+    try {
+      beat = JSON.parse(localStorage.getItem(BEAT_KEY) || "null");
+    } catch (e) {}
+    const stale = !beat || now - beat.ts > LEADER_STALE_MS;
+    if (stale || beat.id === TAB_ID) {
+      try {
+        localStorage.setItem(BEAT_KEY, JSON.stringify({ id: TAB_ID, ts: now }));
+      } catch (e) {}
+      isLeader = true;
+    } else {
+      isLeader = false;
     }
+    const s = store.state.settings.sync;
+    if (isLeader && s.autoSync && store.state.apiKey) {
+      const since = now - (store.state.meta.lastSync || 0);
+      if (since >= Math.max(20, s.intervalSec) * 1000) syncNow();
+    }
+  }
+
+  // Settings panel calls this after changing interval/autosync; the loop reads settings
+  // live, so we just kick a tick to apply immediately.
+  function restartSyncTimer() {
+    leaderTick();
   }
 
   function boot() {
@@ -1369,8 +1423,18 @@
       if (ui.view === "main") ui.tickReset();
     }, 1000);
 
-    restartSyncTimer();
-    if (store.state.apiKey) syncNow();
+    // Leader election + auto-sync driver (one tab polls).
+    setInterval(leaderTick, 5000);
+
+    // Reflect another tab's freshly-synced data without polling ourselves.
+    window.addEventListener("storage", (e) => {
+      if (e.key === NS) {
+        store.reload();
+        ui.render();
+      }
+    });
+
+    leaderTick(); // claim leadership + sync now if due
   }
 
   if (document.body) boot();

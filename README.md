@@ -92,14 +92,21 @@ daily counters zero out, and the campaign total carries over.
 Every row has override buttons (open a row with `▼`):
 - **Merc:** +1 / +5 / −1 hit
 - **Training:** +25E / +100E / −25E
-- **Crimes:** + income ($), + nerve (N)
+- **Crimes/OC:** + crime $, + nerve (N), and **+ OC income** (organised-crime payouts live
+  here now). OC income feeds Daily/Monthly totals but is kept separate from the nerve
+  crime target. (Auto-reading OC from the log is a TODO — needs a real OC-payout log entry
+  to map the fields safely.)
 - **Bounty:** +1 / +5 / +10 filled, +1 claimed, +1 expired, edit active slots
 - **War:** toggle ON/OFF + a **war-payout ledger** — add a payout any time (wars recur),
   see each one listed with its date, and **edit** or **remove** individual entries. War
   payouts are campaign-level (they persist across the daily reset and feed the campaign
   total directly), and any added today also show in Daily Income.
-- **Footer:** + OC / misc income ($) — for other sporadic income (organised-crime
-  payouts, etc.). War payouts go in the War Mode row, not here.
+Header buttons: ⟳ sync · ⚙ settings (shows **API calls/min** + which tab is syncing) ·
+— collapse · ✕ hide.
+
+**Multi-tab safe:** if you have several Torn tabs open, only one (the "leader") polls the
+API; the others render the shared data. This keeps API usage at ~3 calls/min total
+regardless of tab count (Torn's limit is 100/min).
 
 Header buttons: ⟳ sync · ⚙ settings · — collapse · ✕ hide (a floating 🎃 re-opens it).
 
