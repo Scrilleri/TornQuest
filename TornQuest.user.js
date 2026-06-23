@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.2.0
+// @version      0.2.1
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -9,8 +9,10 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      api.torn.com
-// @updateURL    https://raw.githubusercontent.com/Scrilleri/TornQuest/main/TornQuest.user.js
-// @downloadURL  https://raw.githubusercontent.com/Scrilleri/TornQuest/main/TornQuest.user.js
+// Auto-update from the LOCAL repo file (repo stays private). Requires Tampermonkey's
+// "Allow access to file URLs" to be enabled. If you ever move the file, update these.
+// @updateURL    file:///C:/discordbotit/TornQuest/TornQuest.user.js
+// @downloadURL  file:///C:/discordbotit/TornQuest/TornQuest.user.js
 // ==/UserScript==
 
 /*
