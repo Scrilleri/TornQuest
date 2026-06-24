@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.3.1
+// @version      0.4.0
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -100,8 +100,9 @@
       mercHitsAuto: 0,
       mercHitsManual: 0,
       ignoredAttacks: 0, // attacks made while War Mode ON (excluded from merc income)
-      // training
-      trainingEnergyUsed: 0, // manual entry (API can't reliably attribute training E)
+      // training (auto from Gym log entries; manual is correction only)
+      trainingEnergyAuto: 0, // sum of data.energy_used from today's "Gym" log entries
+      trainingEnergyUsed: 0, // manual correction component
       // crimes
       crimeNerveAuto: 0,
       crimeNerveManual: 0,
@@ -169,6 +170,8 @@
         // Migrate pre-0.3.0 daily: manualIncome was renamed to ocIncome.
         if (this.state.daily.ocIncome === undefined)
           this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
+        if (this.state.daily.trainingEnergyAuto === undefined)
+          this.state.daily.trainingEnergyAuto = 0;
         this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
         if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
         this.state.history = raw.history || [];
@@ -206,6 +209,8 @@
         this.state.daily = raw.daily || this.state.daily;
         if (this.state.daily && this.state.daily.ocIncome === undefined)
           this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
+        if (this.state.daily && this.state.daily.trainingEnergyAuto === undefined)
+          this.state.daily.trainingEnergyAuto = 0;
         this.state.history = raw.history || [];
         this.state.seenEventIds = raw.seenEventIds || {};
         this.state.meta = raw.meta || this.state.meta;
@@ -323,6 +328,9 @@
     // --- training ---
     trainingTarget(s) {
       return Math.round(s.energy.dailyBudget * (s.energy.trainingPct / 100));
+    },
+    trainingUsed(d) {
+      return (d.trainingEnergyAuto || 0) + (d.trainingEnergyUsed || 0);
     },
 
     // --- crimes / nerve ---
@@ -571,6 +579,19 @@
     return { money, nerve };
   }
 
+  // Pull training energy from a Gym log entry. Verified v2 shape:
+  //   { details:{ category:"Gym", title:"Gym train dexterity" },
+  //     data:{ trains, energy_used, happy_used, <stat>_increased, gym } }
+  function parseTrainingEntry(entry) {
+    const details = entry.details || {};
+    const category = (details.category || "").toLowerCase();
+    const d = entry.data || {};
+    if (category !== "gym") return null;
+    const energy = Number(d.energy_used ?? 0) || 0;
+    if (!energy) return null;
+    return { energy };
+  }
+
   // Detect a "bounty claimed/collected (by you)" log entry.
   // TODO: confirm exact Bounties category title once a real claim is observed.
   function isBountyClaim(entry) {
@@ -635,13 +656,15 @@
         if (st.seenEventIds[id]) continue;
         const crime = parseCrimeEntry(e);
         const bounty = isBountyClaim(e);
-        if (!crime && !bounty) continue; // don't burn the id on unrelated entries
+        const train = parseTrainingEntry(e);
+        if (!crime && !bounty && !train) continue; // don't burn the id on unrelated entries
         st.seenEventIds[id] = 1;
         if (crime) {
           st.daily.crimeIncomeAuto += crime.money;
           st.daily.crimeNerveAuto += crime.nerve;
         }
         if (bounty) st.daily.bountyClaimedAuto += 1;
+        if (train) st.daily.trainingEnergyAuto = (st.daily.trainingEnergyAuto || 0) + train.energy;
       }
       ok.push("log");
     } catch (e) {
@@ -683,7 +706,7 @@
       nerveUsed: calc.nerveUsed(d),
       bountyClaimed: calc.bountyClaimed(d),
       bountyFilled: d.bountyFilled,
-      trainingEnergy: d.trainingEnergyUsed,
+      trainingEnergy: calc.trainingUsed(d),
       warPayout: warForDay,
       ocIncome: d.ocIncome,
     });
@@ -949,6 +972,7 @@
       const mercIncTarget = calc.mercIncomeTarget(s);
 
       const trainTarget = calc.trainingTarget(s);
+      const trainUsed = calc.trainingUsed(d);
 
       const potNerve = calc.potentialDailyNerve(s);
       const nerveUsed = calc.nerveUsed(d);
@@ -1014,13 +1038,14 @@
              <span class="tq-btn" data-act="merc-1">−1</span>
            </div>`
         ) +
-        // Training
+        // Training (energy auto-read from Gym log; manual buttons are correction)
         row(
           "train", "💪", "Training",
-          `${fmtInt(d.trainingEnergyUsed)} / ${fmtInt(trainTarget)}E`,
-          `${pct(d.trainingEnergyUsed, trainTarget).toFixed(0)}%`,
-          pct(d.trainingEnergyUsed, trainTarget),
-          `<div class="tq-kv"><span>Daily energy budget</span><span>${fmtInt(s.energy.dailyBudget)}E</span></div>
+          `${fmtInt(trainUsed)} / ${fmtInt(trainTarget)}E`,
+          `${pct(trainUsed, trainTarget).toFixed(0)}%`,
+          pct(trainUsed, trainTarget),
+          `<div class="tq-kv"><span>Auto (gym log) / manual</span><span>${fmtInt(d.trainingEnergyAuto || 0)}E / ${fmtInt(d.trainingEnergyUsed || 0)}E</span></div>
+           <div class="tq-kv"><span>Daily energy budget</span><span>${fmtInt(s.energy.dailyBudget)}E</span></div>
            <div class="tq-kv"><span>Split merc / train</span><span>${s.energy.mercPct}% / ${s.energy.trainingPct}%</span></div>
            <div class="tq-kv"><span>Current energy (API)</span><span>${energyNow}</span></div>
            <div class="tq-btns">

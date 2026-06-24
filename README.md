@@ -66,8 +66,8 @@ extra browser permissions needed.
 |---|---|---|
 | 🎃 Cane Fund | campaign $ / target, % | computed |
 | ⚔ Merc Hits | hits done / target, $ income | attacks API (War OFF) + manual |
-| 💪 Training | energy used / target | manual + split % |
-| 🧠 Crimes | nerve used / potential, $ income / target, needed today | log API + manual |
+| 💪 Training | energy used / target | **Gym log (auto)** + manual |
+| 🧠 Crimes/OC | nerve used / potential, $ income / target, needed today; OC income | log API + manual |
 | 💰 Bounty Slots | filled / target, est $ | manual + log claims |
 | 🛡 War Mode | ON/OFF, attacks ignored, war payout | toggle + manual |
 
@@ -91,7 +91,8 @@ daily counters zero out, and the campaign total carries over.
 
 Every row has override buttons (open a row with `▼`):
 - **Merc:** +1 / +5 / −1 hit
-- **Training:** +25E / +100E / −25E
+- **Training:** energy is **auto-read from your Gym log** (`data.energy_used`); the
+  +25E / +100E / −25E buttons are manual corrections on top of that.
 - **Crimes/OC:** + crime $, + nerve (N), and **+ OC income** (organised-crime payouts live
   here now). OC income feeds Daily/Monthly totals but is kept separate from the nerve
   crime target. (OC is **manual by design**: OC payouts arrive in your faction balance
