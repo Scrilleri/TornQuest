@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.5.0
+// @version      0.6.0
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -115,8 +115,10 @@
       crimeNerveManual: 0,
       crimeIncomeAuto: 0,
       crimeIncomeManual: 0,
-      // bounty
-      bountyFilled: 0,
+      // bounty slots you SELL (place bounties for others) — auto from "Bounty place" log
+      bountyFilledAuto: 0, // sum of data.quantity from today's "Bounty place" entries
+      bountyPlaceCostAuto: 0, // sum of data.cost (your outlay; buyer reimburses)
+      bountyFilled: 0, // manual correction
       bountyClaimedAuto: 0,
       bountyClaimedManual: 0,
       bountyExpired: 0,
@@ -182,6 +184,8 @@
         // Pre-0.5.0: mercHitsAuto counted attacks directly -> attacksAuto.
         if (this.state.daily.attacksAuto === undefined)
           this.state.daily.attacksAuto = this.state.daily.mercHitsAuto || 0;
+        if (this.state.daily.bountyFilledAuto === undefined)
+          this.state.daily.bountyFilledAuto = 0;
         this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
         if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
         this.state.history = raw.history || [];
@@ -223,6 +227,8 @@
           this.state.daily.trainingEnergyAuto = 0;
         if (this.state.daily && this.state.daily.attacksAuto === undefined)
           this.state.daily.attacksAuto = this.state.daily.mercHitsAuto || 0;
+        if (this.state.daily && this.state.daily.bountyFilledAuto === undefined)
+          this.state.daily.bountyFilledAuto = 0;
         this.state.history = raw.history || [];
         this.state.seenEventIds = raw.seenEventIds || {};
         this.state.meta = raw.meta || this.state.meta;
@@ -386,9 +392,16 @@
       return Math.max(0, this.crimeDailyTarget(s) - this.crimeIncome(d));
     },
 
-    // --- bounty ---
+    // --- bounty slots you sell (place bounties for others) ---
+    bountyFilled(d) {
+      return (d.bountyFilledAuto || 0) + (d.bountyFilled || 0);
+    },
+    bountyFilledIncome(s, d) {
+      // income = slots you sold × your per-slot fee (slotValue). Realized on sale.
+      return this.bountyFilled(d) * s.bounty.slotValue;
+    },
     bountyEstIncome(s, d) {
-      return (d.bountyFilled || 0) * s.bounty.slotValue;
+      return this.bountyFilledIncome(s, d);
     },
     bountyClaimed(d) {
       return (d.bountyClaimedAuto || 0) + (d.bountyClaimedManual || 0);
@@ -422,7 +435,7 @@
         this.mercIncome(s, d) +
         this.bountyClaimIncome(d) + // claiming others' bounties (Attacks row)
         this.crimeIncome(d) +
-        this.bountyClaimedIncome(s, d) + // selling your bounty slots (Bounty Slots row)
+        this.bountyFilledIncome(s, d) + // selling your bounty slots (Bounty Slots row)
         (d.ocIncome || 0)
       );
     },
@@ -637,6 +650,19 @@
     return { reward: Number(d.bounty_reward ?? d.reward ?? 0) || 0 };
   }
 
+  // Parse a "Bounty place" log entry = you PLACING bounties (selling your slots for
+  // others). Verified v2 shape: data:{ target, quantity, bounty_reward, cost, reason }.
+  // quantity = slots placed in that action; cost = your outlay (buyer reimburses).
+  function parseBountyPlace(entry) {
+    const details = entry.details || {};
+    const category = (details.category || "").toLowerCase();
+    const title = (details.title || entry.title || "").toLowerCase();
+    if (category !== "bounties") return null;
+    if (!title.includes("place")) return null;
+    const d = entry.data || {};
+    return { quantity: Number(d.quantity ?? 1) || 1, cost: Number(d.cost ?? 0) || 0 };
+  }
+
   // ========================================================================== //
   // SYNC  (cumulative, spam-proof: re-aggregate today's events, dedupe by id)
   // ========================================================================== //
@@ -689,8 +715,9 @@
         if (st.seenEventIds[id]) continue;
         const crime = parseCrimeEntry(e);
         const claim = parseBountyClaim(e);
+        const place = parseBountyPlace(e);
         const train = parseTrainingEntry(e);
-        if (!crime && !claim && !train) continue; // don't burn the id on unrelated entries
+        if (!crime && !claim && !place && !train) continue; // don't burn id on unrelated entries
         st.seenEventIds[id] = 1;
         if (crime) {
           st.daily.crimeIncomeAuto += crime.money;
@@ -699,6 +726,10 @@
         if (claim) {
           st.daily.bountyClaimAuto = (st.daily.bountyClaimAuto || 0) + 1;
           st.daily.bountyClaimIncomeAuto = (st.daily.bountyClaimIncomeAuto || 0) + claim.reward;
+        }
+        if (place) {
+          st.daily.bountyFilledAuto = (st.daily.bountyFilledAuto || 0) + place.quantity;
+          st.daily.bountyPlaceCostAuto = (st.daily.bountyPlaceCostAuto || 0) + place.cost;
         }
         if (train) st.daily.trainingEnergyAuto = (st.daily.trainingEnergyAuto || 0) + train.energy;
       }
@@ -740,8 +771,10 @@
       mercIncome: calc.mercIncome(s, d),
       crimeIncome: calc.crimeIncome(d),
       nerveUsed: calc.nerveUsed(d),
-      bountyClaimed: calc.bountyClaimed(d),
-      bountyFilled: d.bountyFilled,
+      bountyClaims: calc.bountyClaimCount(d),
+      bountyClaimIncome: calc.bountyClaimIncome(d),
+      bountyFilled: calc.bountyFilled(d),
+      bountyFilledIncome: calc.bountyFilledIncome(s, d),
       trainingEnergy: calc.trainingUsed(d),
       warPayout: warForDay,
       ocIncome: d.ocIncome,
@@ -1019,7 +1052,7 @@
       const crimeTarget = calc.crimeDailyTarget(s);
       const crimeNeed = calc.crimeNeededToday(s, d);
 
-      const bFilled = d.bountyFilled || 0;
+      const bFilled = calc.bountyFilled(d);
       const bEst = calc.bountyEstIncome(s, d);
       const bIncTarget = calc.bountyIncomeTarget(s);
 
@@ -1128,10 +1161,11 @@
           `${fmtInt(bFilled)} / ${fmtInt(s.bounty.dailyTarget)}`,
           `${fmtMoney(bEst)} / ${fmtMoney(bIncTarget)}`,
           pct(bFilled, s.bounty.dailyTarget),
-          `<div class="tq-kv"><span>Active slots</span><span>${d.activeSlots}</span></div>
-           <div class="tq-kv"><span>Claimed today</span><span>${calc.bountyClaimed(d)} ($${fmtMoneyShort(calc.bountyClaimedIncome(s,d))})</span></div>
-           <div class="tq-kv"><span>Expired today</span><span>${d.bountyExpired}</span></div>
-           <div class="tq-kv"><span>Slot value</span><span>$${fmtMoneyShort(s.bounty.slotValue)}</span></div>
+          `<div class="tq-kv"><span>Sold: auto (log) / manual</span><span>${fmtInt(d.bountyFilledAuto || 0)} / ${fmtInt(d.bountyFilled || 0)}</span></div>
+           <div class="tq-kv"><span>Income (sold × fee)</span><span>${fmtMoney(calc.bountyFilledIncome(s, d))}</span></div>
+           <div class="tq-kv"><span>Place cost paid (reimbursed)</span><span>${fmtMoney(d.bountyPlaceCostAuto || 0)}</span></div>
+           <div class="tq-kv"><span>Slot fee value</span><span>$${fmtMoneyShort(s.bounty.slotValue)}</span></div>
+           <div class="tq-kv"><span>Active / expired today</span><span>${d.activeSlots} / ${d.bountyExpired}</span></div>
            <div class="tq-btns">
              <span class="tq-btn" data-act="bf1">+1 filled</span>
              <span class="tq-btn" data-act="bf5">+5</span>

@@ -68,7 +68,7 @@ extra browser permissions needed.
 | ⚔ Attacks | merc hits + bounty claims (kept separate), $ income | attacks API + Bounties log + manual |
 | 💪 Training | energy used / target | **Gym log (auto)** + manual |
 | 🧠 Crimes/OC | nerve used / potential, $ income / target, needed today; OC income | log API + manual |
-| 💰 Bounty Slots | filled / target, est $ | manual + log claims |
+| 💰 Bounty Slots (sell) | slots sold / target, $ income | **Bounty place log (auto)** + manual |
 | 🛡 War Mode | ON/OFF, attacks ignored, war payout | toggle + manual |
 
 Footer: **Daily Income**, **Monthly Income**, **Days Left**, and a live **Reset in
