@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TornQuest — Daily Objective Tracker
 // @namespace    https://github.com/tornquest
-// @version      0.4.1
+// @version      0.5.0
 // @description  Compact dark-fantasy MMORPG-style quest tracker for a 60-day Torn money campaign. Tracks merc hits, training energy, crimes/nerve, bounty slots and war mode with adaptive daily pacing. Read-only (official API only) — never automates any in-game action.
 // @author       TornQuest
 // @match        https://www.torn.com/*
@@ -98,10 +98,15 @@
   function freshDaily(dayKey) {
     return {
       dayKey,
-      // merc
-      mercHitsAuto: 0,
-      mercHitsManual: 0,
+      // attacks (war-off): outgoing attacks split into merc hits + bounty claims
+      attacksAuto: 0, // count of outgoing attacks (from /user/attacks), war-off
+      mercHitsManual: 0, // manual merc correction
       ignoredAttacks: 0, // attacks made while War Mode ON (excluded from merc income)
+      // bounty claims (you claim someone's bounty by attacking the target)
+      bountyClaimAuto: 0, // count from "Bounties"/"Bounty claim" log
+      bountyClaimIncomeAuto: 0, // sum of data.bounty_reward
+      bountyClaimManual: 0,
+      bountyClaimIncomeManual: 0,
       // training (auto from Gym log entries; manual is correction only)
       trainingEnergyAuto: 0, // sum of data.energy_used from today's "Gym" log entries
       trainingEnergyUsed: 0, // manual correction component
@@ -174,6 +179,9 @@
           this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
         if (this.state.daily.trainingEnergyAuto === undefined)
           this.state.daily.trainingEnergyAuto = 0;
+        // Pre-0.5.0: mercHitsAuto counted attacks directly -> attacksAuto.
+        if (this.state.daily.attacksAuto === undefined)
+          this.state.daily.attacksAuto = this.state.daily.mercHitsAuto || 0;
         this.state.campaign = raw.campaign || { bankedIncome: 0, warPayouts: [] };
         if (!Array.isArray(this.state.campaign.warPayouts)) this.state.campaign.warPayouts = [];
         this.state.history = raw.history || [];
@@ -213,6 +221,8 @@
           this.state.daily.ocIncome = this.state.daily.manualIncome || 0;
         if (this.state.daily && this.state.daily.trainingEnergyAuto === undefined)
           this.state.daily.trainingEnergyAuto = 0;
+        if (this.state.daily && this.state.daily.attacksAuto === undefined)
+          this.state.daily.attacksAuto = this.state.daily.mercHitsAuto || 0;
         this.state.history = raw.history || [];
         this.state.seenEventIds = raw.seenEventIds || {};
         this.state.meta = raw.meta || this.state.meta;
@@ -306,6 +316,25 @@
   // ========================================================================== //
 
   const calc = {
+    // --- attacks: merc hits + bounty claims ---
+    bountyClaimCount(d) {
+      return (d.bountyClaimAuto || 0) + (d.bountyClaimManual || 0);
+    },
+    bountyClaimIncome(d) {
+      return (d.bountyClaimIncomeAuto || 0) + (d.bountyClaimIncomeManual || 0);
+    },
+    // Merc hits = outgoing attacks that were NOT bounty claims (claims attack a target
+    // too, so subtract the auto-claim count from the auto-attack count).
+    mercHitsAuto(d) {
+      return Math.max(0, (d.attacksAuto || 0) - (d.bountyClaimAuto || 0));
+    },
+    mercHitsDone(d) {
+      return this.mercHitsAuto(d) + (d.mercHitsManual || 0);
+    },
+    attacksTotal(d) {
+      return this.mercHitsDone(d) + this.bountyClaimCount(d);
+    },
+
     // --- merc ---
     mercEnergyBudget(s) {
       return s.energy.dailyBudget * (s.energy.mercPct / 100);
@@ -314,9 +343,6 @@
       const perHit = s.energy.energyPerHit || 25;
       return Math.floor(this.mercEnergyBudget(s) / perHit);
     },
-    mercHitsDone(d) {
-      return (d.mercHitsAuto || 0) + (d.mercHitsManual || 0);
-    },
     mercIncome(s, d) {
       return this.mercHitsDone(d) * s.merc.hitValue;
     },
@@ -324,7 +350,8 @@
       return this.mercTargetHits(s) * s.merc.hitValue;
     },
     mercEnergyUsed(s, d) {
-      return this.mercHitsDone(d) * (s.energy.energyPerHit || 25);
+      // all outgoing attacks cost energy (merc hits + bounty claims)
+      return this.attacksTotal(d) * (s.energy.energyPerHit || 25);
     },
 
     // --- training ---
@@ -393,8 +420,9 @@
     dailyIncomeBase(s, d) {
       return (
         this.mercIncome(s, d) +
+        this.bountyClaimIncome(d) + // claiming others' bounties (Attacks row)
         this.crimeIncome(d) +
-        this.bountyClaimedIncome(s, d) +
+        this.bountyClaimedIncome(s, d) + // selling your bounty slots (Bounty Slots row)
         (d.ocIncome || 0)
       );
     },
@@ -594,16 +622,19 @@
     return { energy };
   }
 
-  // Detect a "bounty claimed/collected (by you)" log entry.
-  // TODO: confirm exact Bounties category title once a real claim is observed.
-  function isBountyClaim(entry) {
+  // Parse a "you claimed someone's bounty" log entry. Verified v2 shape:
+  //   { details:{ category:"Bounties", title:"Bounty claim" },
+  //     data:{ lister, anonymous, target, bounty_reward } }
+  // This is YOU claiming another player's bounty (income) — distinct from selling your
+  // own bounty slots (the Bounty Slots row). Returns the $ reward.
+  function parseBountyClaim(entry) {
     const details = entry.details || {};
     const category = (details.category || "").toLowerCase();
     const title = (details.title || entry.title || "").toLowerCase();
-    return (
-      (category.includes("bount") || title.includes("bounty")) &&
-      /claim|collect|receiv|paid/.test(title)
-    );
+    if (category !== "bounties" && !title.includes("bounty")) return null;
+    if (!title.includes("claim")) return null; // only claims, not placed/received
+    const d = entry.data || {};
+    return { reward: Number(d.bounty_reward ?? d.reward ?? 0) || 0 };
   }
 
   // ========================================================================== //
@@ -643,7 +674,7 @@
         if (st.seenEventIds[id]) continue;
         st.seenEventIds[id] = 1;
         if (st.meta.warMode) st.daily.ignoredAttacks += 1;
-        else st.daily.mercHitsAuto += 1;
+        else st.daily.attacksAuto = (st.daily.attacksAuto || 0) + 1;
       }
       ok.push("attacks");
     } catch (e) {
@@ -657,15 +688,18 @@
         const id = "log:" + (e.id || `${e.timestamp}:${e.title}`);
         if (st.seenEventIds[id]) continue;
         const crime = parseCrimeEntry(e);
-        const bounty = isBountyClaim(e);
+        const claim = parseBountyClaim(e);
         const train = parseTrainingEntry(e);
-        if (!crime && !bounty && !train) continue; // don't burn the id on unrelated entries
+        if (!crime && !claim && !train) continue; // don't burn the id on unrelated entries
         st.seenEventIds[id] = 1;
         if (crime) {
           st.daily.crimeIncomeAuto += crime.money;
           st.daily.crimeNerveAuto += crime.nerve;
         }
-        if (bounty) st.daily.bountyClaimedAuto += 1;
+        if (claim) {
+          st.daily.bountyClaimAuto = (st.daily.bountyClaimAuto || 0) + 1;
+          st.daily.bountyClaimIncomeAuto = (st.daily.bountyClaimIncomeAuto || 0) + claim.reward;
+        }
         if (train) st.daily.trainingEnergyAuto = (st.daily.trainingEnergyAuto || 0) + train.energy;
       }
       ok.push("log");
@@ -972,6 +1006,9 @@
       const mercTarget = calc.mercTargetHits(s);
       const mercInc = calc.mercIncome(s, d);
       const mercIncTarget = calc.mercIncomeTarget(s);
+      const bountyClaims = calc.bountyClaimCount(d);
+      const bountyClaimInc = calc.bountyClaimIncome(d);
+      const attacksTotal = calc.attacksTotal(d);
 
       const trainTarget = calc.trainingTarget(s);
       const trainUsed = calc.trainingUsed(d);
@@ -1025,19 +1062,25 @@
            <div class="tq-kv"><span>Today so far</span><span>${fmtMoney(dailyIncome)}</span></div>
            <div class="tq-kv"><span>Needed / day</span><span>${fmtMoney(needPerDay)}</span></div>`
         ) +
-        // Merc Hits
+        // Attacks (merc hits + bounty claims, kept separate)
         row(
-          "merc", "⚔", "Merc Hits",
-          `${fmtInt(mercHits)} / ${fmtInt(mercTarget)}`,
-          `${fmtMoney(mercInc)} / ${fmtMoney(mercIncTarget)}`,
+          "merc", "⚔", "Attacks",
+          `${fmtInt(mercHits)} hit · ${fmtInt(bountyClaims)} bty`,
+          `${fmtMoney(mercInc + bountyClaimInc)}`,
           pct(mercHits, mercTarget),
-          `<div class="tq-kv"><span>Energy used (merc)</span><span>${fmtInt(calc.mercEnergyUsed(s, d))}E</span></div>
+          `<div class="tq-kv"><span>Merc hits</span><span>${fmtInt(mercHits)} / ${fmtInt(mercTarget)} · ${fmtMoney(mercInc)}</span></div>
+           <div class="tq-kv"><span>Bounty claims</span><span>${fmtInt(bountyClaims)} · ${fmtMoney(bountyClaimInc)}</span></div>
+           <div class="tq-kv"><span>Total attacks</span><span>${fmtInt(attacksTotal)}</span></div>
+           <div class="tq-kv"><span>Energy used (attacks)</span><span>${fmtInt(calc.mercEnergyUsed(s, d))}E</span></div>
            <div class="tq-kv"><span>Hit value</span><span>$${fmtMoneyShort(s.merc.hitValue)}</span></div>
-           <div class="tq-kv"><span>Auto / manual</span><span>${d.mercHitsAuto} / ${d.mercHitsManual}</span></div>
            <div class="tq-btns">
              <span class="tq-btn" data-act="merc+1">+1 hit</span>
              <span class="tq-btn" data-act="merc+5">+5</span>
              <span class="tq-btn" data-act="merc-1">−1</span>
+           </div>
+           <div class="tq-btns">
+             <input class="tq-num" data-num="btyclaim" type="number" placeholder="$ bounty" />
+             <span class="tq-btn" data-act="btyclaim">+ bounty claim</span>
            </div>`
         ) +
         // Training (energy auto-read from Gym log; manual buttons are correction)
@@ -1193,7 +1236,12 @@
       const map = {
         "merc+1": () => (d.mercHitsManual += 1),
         "merc+5": () => (d.mercHitsManual += 5),
-        "merc-1": () => (d.mercHitsManual = Math.max(-d.mercHitsAuto, d.mercHitsManual - 1)),
+        "merc-1": () => (d.mercHitsManual = Math.max(-calc.mercHitsAuto(d), d.mercHitsManual - 1)),
+        "btyclaim": () => {
+          const amt = this.numVal("btyclaim");
+          d.bountyClaimManual = (d.bountyClaimManual || 0) + 1;
+          d.bountyClaimIncomeManual = (d.bountyClaimIncomeManual || 0) + amt;
+        },
         "train+25": () => (d.trainingEnergyUsed += 25),
         "train+100": () => (d.trainingEnergyUsed += 100),
         "train-25": () => (d.trainingEnergyUsed = Math.max(0, d.trainingEnergyUsed - 25)),

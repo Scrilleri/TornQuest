@@ -65,7 +65,7 @@ extra browser permissions needed.
 | Row | Shows | Source |
 |---|---|---|
 | 🎃 Cane Fund | campaign $ / target, % | computed |
-| ⚔ Merc Hits | hits done / target, $ income | attacks API (War OFF) + manual |
+| ⚔ Attacks | merc hits + bounty claims (kept separate), $ income | attacks API + Bounties log + manual |
 | 💪 Training | energy used / target | **Gym log (auto)** + manual |
 | 🧠 Crimes/OC | nerve used / potential, $ income / target, needed today; OC income | log API + manual |
 | 💰 Bounty Slots | filled / target, est $ | manual + log claims |
@@ -90,7 +90,10 @@ daily counters zero out, and the campaign total carries over.
 ## Manual controls
 
 Every row has override buttons (open a row with `▼`):
-- **Merc:** +1 / +5 / −1 hit
+- **Attacks:** +1 / +5 / −1 merc hit, and **+ bounty claim** (enter the $ reward). Merc
+  hits = outgoing attacks − bounty claims, so claiming a bounty never double-counts as a
+  merc hit. Bounty *claims* (claiming others' bounties for $) are separate from the
+  **Bounty Slots** row (selling your own slots).
 - **Training:** energy is **auto-read from your Gym log** (`data.energy_used`); the
   +25E / +100E / −25E buttons are manual corrections on top of that.
 - **Crimes/OC:** + crime $, + nerve (N), and **+ OC income** (organised-crime payouts live
